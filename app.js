@@ -199,10 +199,16 @@ async function sheetAppendRow(sheetName, rowData) {
 
 async function fetchUserByUsername(username) {
   const rows = await sheetSearch(CONFIG.SHEETS.USERS, { username });
-  if (rows.length === 0) {
+
+  const matched = rows.find(
+    (row) => String(row.username).trim() === String(username).trim()
+  );
+
+  if (!matched) {
     return null;
   }
-  return normalizeUser(rows[0]);
+
+  return normalizeUser(matched);
 }
 
 async function fetchGiftById(giftId) {
