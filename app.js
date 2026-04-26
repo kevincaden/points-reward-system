@@ -166,7 +166,7 @@ async function sheetGetAll(sheetName) {
 }
 
 async function sheetSearch(sheetName, filters) {
-  const data = await requestSheet("/search", {
+  const data = await requestSheet("", {
     query: { ...filters, sheet: sheetName }
   });
   return toArray(data);
