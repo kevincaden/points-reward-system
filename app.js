@@ -103,8 +103,12 @@ function normalizeGift(row) {
 }
 
 function toInt(value) {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : 0;
+  if (value === null || value === undefined) return 0;
+
+  // 去空格 + 强制转数字
+  const num = Number(String(value).trim());
+
+  return Number.isFinite(num) ? Math.floor(num) : 0;
 }
 
 function isAdmin(user) {
@@ -545,7 +549,10 @@ async function exchangeGift(giftId) {
       if (!latestUser || !latestGift) {
         throw new Error("用户或礼品数据不存在");
       }
-      if (latestUser.points < latestGift.points) {
+      const userPoints = Number(latestUser.points);
+const giftPoints = Number(latestGift.points);
+
+if (userPoints < giftPoints) {
         throw new Error("积分不足");
       }
       if (latestGift.stock <= 0) {
