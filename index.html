@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>积分兑换商城</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-100 text-slate-800">
+  <header class="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
+    <div class="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-3 md:px-6">
+      <h1 class="text-lg font-bold md:text-xl">积分兑换商城</h1>
+      <div class="flex items-center gap-3">
+        <p id="user-display" class="text-sm text-slate-600"></p>
+        <button id="logout-btn" class="hidden rounded bg-rose-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-rose-700">退出</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto w-full max-w-7xl px-4 py-6 md:px-6">
+    <section id="login-container" class="mx-auto mt-10 w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+      <h2 class="mb-5 text-center text-2xl font-semibold">用户登录</h2>
+      <div class="space-y-3">
+        <input id="login-username" type="text" placeholder="用户名" class="w-full rounded border border-slate-300 px-3 py-2 outline-none transition focus:border-blue-500">
+        <input id="login-password" type="password" placeholder="密码" class="w-full rounded border border-slate-300 px-3 py-2 outline-none transition focus:border-blue-500">
+        <button id="login-btn" class="w-full rounded bg-blue-600 py-2 font-medium text-white hover:bg-blue-700">登录</button>
+      </div>
+    </section>
+
+    <section id="main-content" class="hidden space-y-6">
+      <div class="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
+        <p class="text-sm text-slate-600">系统每 15 秒后台同步一次数据，支持多端实时查看。</p>
+        <button id="refresh-btn" class="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">立即刷新</button>
+      </div>
+
+      <section class="admin-only hidden grid gap-4 md:grid-cols-2">
+        <div class="rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <h3 class="mb-3 text-base font-semibold text-amber-900">新增礼品</h3>
+          <form id="add-gift-form" class="space-y-2">
+            <input id="add-gift-id" name="id" type="text" placeholder="礼品ID（留空自动生成）" class="w-full rounded border border-amber-300 px-3 py-2 text-sm outline-none focus:border-amber-500">
+            <input id="add-gift-name" name="name" type="text" placeholder="礼品名称" class="w-full rounded border border-amber-300 px-3 py-2 text-sm outline-none focus:border-amber-500" required>
+            <div class="grid grid-cols-2 gap-2">
+              <input id="add-gift-points" name="points" type="number" min="0" step="1" placeholder="所需积分" class="w-full rounded border border-amber-300 px-3 py-2 text-sm outline-none focus:border-amber-500" required>
+              <input id="add-gift-stock" name="stock" type="number" min="0" step="1" placeholder="库存" class="w-full rounded border border-amber-300 px-3 py-2 text-sm outline-none focus:border-amber-500" required>
+            </div>
+            <input id="add-gift-image" name="image" type="url" placeholder="图片链接（https://...）" class="w-full rounded border border-amber-300 px-3 py-2 text-sm outline-none focus:border-amber-500">
+            <button type="submit" class="w-full rounded bg-emerald-600 py-2 text-sm font-medium text-white hover:bg-emerald-700">新增礼品</button>
+          </form>
+        </div>
+
+        <div id="manage-user-section" class="admin-only rounded-lg border border-indigo-300 bg-indigo-50 p-4">
+          <h3 class="mb-3 text-base font-semibold text-indigo-900">积分管理</h3>
+          <div class="space-y-2">
+            <div class="flex gap-2">
+              <input id="manage-username" type="text" placeholder="输入用户名并检索" class="w-full rounded border border-indigo-300 px-3 py-2 text-sm outline-none focus:border-indigo-500">
+              <button id="search-user-btn" type="button" class="rounded bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700">检索</button>
+            </div>
+            <p id="managed-user-status" class="text-sm text-indigo-700">未选择用户</p>
+            <form id="update-points-form" class="flex gap-2">
+              <input id="managed-user-points" type="number" min="0" step="1" placeholder="新积分" class="w-full rounded border border-indigo-300 px-3 py-2 text-sm outline-none focus:border-indigo-500">
+              <button type="submit" class="rounded bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-900">更新</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-3">
+        <h2 class="text-xl font-semibold">礼品列表</h2>
+        <div id="gift-list" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+      </section>
+    </section>
+  </main>
+
+  <div id="loading-overlay" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+    <div class="bg-white p-5 rounded-lg shadow-xl text-center">
+      <p id="loading-text" class="text-lg font-semibold">正在处理...</p>
+    </div>
+  </div>
+
+  <div id="toast" class="fixed bottom-10 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full text-white shadow-2xl hidden z-50"></div>
+
+  <div id="edit-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-40 p-4">
+    <div class="bg-white w-full max-w-md p-6 rounded-lg shadow-2xl">
+      <h3 class="text-xl font-bold mb-4">编辑礼品</h3>
+      <form id="edit-gift-form" class="space-y-3">
+        <input type="hidden" id="edit-gift-id">
+        <input type="text" id="edit-gift-name" placeholder="名称" class="w-full border p-2 rounded" required>
+        <input type="number" id="edit-gift-points" placeholder="所需积分" class="w-full border p-2 rounded" required>
+        <input type="number" id="edit-gift-stock" placeholder="库存数量" class="w-full border p-2 rounded" required>
+        <input type="url" id="edit-gift-image" placeholder="图片 URL" class="w-full border p-2 rounded">
+        <div class="flex gap-2 pt-2">
+          <button type="submit" class="flex-1 bg-blue-600 text-white py-2 rounded">保存</button>
+          <button type="button" id="cancel-edit-btn" class="flex-1 bg-gray-200 py-2 rounded">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
