@@ -1,5 +1,8 @@
 const CONFIG = {
-  BASE_URL: "https://sheetdb.io/api/v1/mddx94rrxajdy",
+  // ⚠️ API key 当前暴露在前端 — 任何打开 DevTools 的用户可读写整个数据库
+  //    生产环境建议添加后端代理层（如 Cloudflare Worker / Vercel Function），
+  //    将 API key 放在服务端，前端只请求自己的代理接口。
+  BASE_URL: "https://sheetdb.io/api/v1/bzgwqm00fnygm",
   SHEETS: {
     USERS: "users",
     GIFTS: "gifts",
@@ -16,12 +19,27 @@ const state = {
   gifts: [],
   managedUser: null,
   syncTimer: null,
-  pendingOps: 0
+  pendingOps: 0,
+  isExchanging: false
 };
 
 const els = {};
 
 document.addEventListener("DOMContentLoaded", init);
+
+// ====== 全局未捕获异常兜底 ======
+
+window.addEventListener("unhandledrejection", (event) => {
+  console.error("未捕获的异步错误:", event.reason);
+  showToast("发生意外错误，请刷新页面重试", true);
+});
+
+window.addEventListener("error", (event) => {
+  console.error("运行时错误:", event.error || event.message);
+  showToast("页面发生错误，请刷新重试", true);
+});
+
+// ====== 初始化 ======
 
 async function init() {
   cacheElements();
@@ -83,6 +101,8 @@ function bindEvents() {
   });
 }
 
+// ====== 数据规范化 ======
+
 function normalizeUser(row) {
   return {
     username: String(row?.username ?? "").trim(),
@@ -103,12 +123,8 @@ function normalizeGift(row) {
 }
 
 function toInt(value) {
-  if (value === null || value === undefined) return 0;
-
-  // 去空格 + 强制转数字
-  const num = Number(String(value).trim());
-
-  return Number.isFinite(num) ? Math.floor(num) : 0;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function isAdmin(user) {
@@ -124,6 +140,8 @@ function escapeHtml(text) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
+
+// ====== 网络请求 ======
 
 function buildUrl(path = "", query = {}) {
   const url = new URL(`${CONFIG.BASE_URL}${path}`);
@@ -170,15 +188,14 @@ async function sheetGetAll(sheetName) {
 }
 
 async function sheetSearch(sheetName, filters) {
-  const data = await requestSheet("", {
+  const data = await requestSheet("/search", {
     query: { ...filters, sheet: sheetName }
   });
   return toArray(data);
 }
 
 async function sheetPatchBy(sheetName, column, value, patchData) {
-  const path = `/${encodeURIComponent(column)}/${encodeURIComponent(value)}`;
-  return requestSheet(path, {
+  return requestSheet(`/${encodeURIComponent(column)}/${encodeURIComponent(value)}`, {
     method: "PATCH",
     query: { sheet: sheetName },
     body: patchData
@@ -186,8 +203,7 @@ async function sheetPatchBy(sheetName, column, value, patchData) {
 }
 
 async function sheetDeleteBy(sheetName, column, value) {
-  const path = `/${encodeURIComponent(column)}/${encodeURIComponent(value)}`;
-  return requestSheet(path, {
+  return requestSheet(`/${encodeURIComponent(column)}/${encodeURIComponent(value)}`, {
     method: "DELETE",
     query: { sheet: sheetName }
   });
@@ -201,18 +217,27 @@ async function sheetAppendRow(sheetName, rowData) {
   });
 }
 
+/**
+ * 校验 PATCH 请求的响应，确认数据实际被更新。
+ * SheetDB 返回 {"updated": 0} 时（数据未匹配）状态码仍为 200，
+ * 此处主动将其视为错误。
+ */
+async function requirePatchApplied(promise, label) {
+  const result = await promise;
+  if (result && typeof result === "object" && "updated" in result && result.updated === 0) {
+    throw new Error(`${label}失败：数据未找到或未变更`);
+  }
+  return result;
+}
+
+// ====== 数据查询 ======
+
 async function fetchUserByUsername(username) {
   const rows = await sheetSearch(CONFIG.SHEETS.USERS, { username });
-
-  const matched = rows.find(
-    (row) => String(row.username).trim() === String(username).trim()
-  );
-
-  if (!matched) {
+  if (rows.length === 0) {
     return null;
   }
-
-  return normalizeUser(matched);
+  return normalizeUser(rows[0]);
 }
 
 async function fetchGiftById(giftId) {
@@ -222,6 +247,8 @@ async function fetchGiftById(giftId) {
   }
   return normalizeGift(rows[0]);
 }
+
+// ====== 加载状态管理 ======
 
 async function withLoading(text, action) {
   setLoading(true, text);
@@ -267,6 +294,8 @@ function setControlsDisabled(disabled) {
   });
 }
 
+// ====== Toast 提示 ======
+
 function showToast(message, isError = false) {
   els.toast.textContent = message;
   els.toast.classList.remove("hidden", "bg-slate-900", "bg-rose-700");
@@ -275,6 +304,8 @@ function showToast(message, isError = false) {
     els.toast.classList.add("hidden");
   }, 2200);
 }
+
+// ====== 会话管理 ======
 
 function saveSession(user) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ username: user.username }));
@@ -352,6 +383,8 @@ function updateUserDisplay() {
   els.userDisplay.textContent = `${state.currentUser.username}${adminTag} | 积分: ${state.currentUser.points}`;
 }
 
+// ====== 登录 / 退出 ======
+
 async function login() {
   const username = els.loginUsername.value.trim();
   const password = els.loginPassword.value;
@@ -392,6 +425,8 @@ function logout() {
   renderSessionUI();
   showToast("已退出登录");
 }
+
+// ====== 自动同步 ======
 
 function startSync() {
   stopSync();
@@ -450,6 +485,8 @@ async function manualRefresh() {
   }
 }
 
+// ====== 礼品列表 ======
+
 async function loadGifts({ silent = false } = {}) {
   if (!silent) {
     els.giftList.innerHTML = "<p class='col-span-full text-center text-slate-500'>正在加载礼品...</p>";
@@ -478,8 +515,19 @@ function renderGiftList() {
 
   const admin = isAdmin(state.currentUser);
   const cards = state.gifts.map((gift) => {
-    const canExchange = gift.stock > 0 && state.currentUser.points >= gift.points;
-    const exchangeText = gift.stock <= 0 ? "已售罄" : "兑换";
+    // 按钮文案：优先显示最具体的限制原因
+    let exchangeText, canExchange;
+    if (gift.stock <= 0) {
+      exchangeText = "已售罄";
+      canExchange = false;
+    } else if (state.currentUser.points < gift.points) {
+      exchangeText = "积分不足";
+      canExchange = false;
+    } else {
+      exchangeText = "兑换";
+      canExchange = true;
+    }
+
     const adminActions = admin
       ? `
         <div class="mt-2 flex gap-2">
@@ -494,7 +542,8 @@ function renderGiftList() {
         <img src="${escapeHtml(gift.image)}"
              alt="${escapeHtml(gift.name)}"
              class="mb-3 h-40 w-full rounded object-cover"
-             onerror="this.src='${CONFIG.IMAGE_PLACEHOLDER}'">
+             loading="lazy"
+             onerror="this.onerror=null;this.src='${CONFIG.IMAGE_PLACEHOLDER}'">
         <h3 class="line-clamp-1 text-base font-semibold">${escapeHtml(gift.name)}</h3>
         <p class="mt-1 text-sm text-blue-700">所需积分: ${gift.points}</p>
         <p class="mt-1 text-sm text-slate-600">库存: ${gift.stock}</p>
@@ -513,7 +562,9 @@ function renderGiftList() {
   els.giftList.innerHTML = cards.join("");
 }
 
-async function handleGiftActions(event) {
+// ====== 礼品操作事件路由 ======
+
+function handleGiftActions(event) {
   const button = event.target.closest("button[data-action]");
   if (!button) {
     return;
@@ -522,7 +573,7 @@ async function handleGiftActions(event) {
   const giftId = button.dataset.id;
 
   if (action === "exchange") {
-    await exchangeGift(giftId);
+    exchangeGift(giftId);
     return;
   }
   if (action === "edit") {
@@ -530,17 +581,37 @@ async function handleGiftActions(event) {
     return;
   }
   if (action === "delete") {
-    await deleteGift(giftId);
+    deleteGift(giftId);
   }
 }
 
+// ====== 兑换礼品（含防超卖与回滚） ======
+
 async function exchangeGift(giftId) {
-  if (!state.currentUser) {
+  if (!state.currentUser) return;
+
+  // 防止并发兑换（双击或网络延迟导致重复提交）
+  if (state.isExchanging) {
+    showToast("正在处理兑换，请稍候...", true);
     return;
   }
 
+  // 从本地列表查找礼品，用于确认弹窗展示
+  const gift = state.gifts.find((g) => g.id === giftId);
+  if (!gift) {
+    showToast("礼品不存在", true);
+    return;
+  }
+
+  // 兑换前二次确认
+  if (!window.confirm(`确认兑换「${gift.name}」（消耗 ${gift.points} 积分）？`)) {
+    return;
+  }
+
+  state.isExchanging = true;
   try {
     await withLoading("正在兑换礼品...", async () => {
+      // 1. 从云端实时拉取最新数据，避免本地缓存导致的竞态
       const [latestUser, latestGift] = await Promise.all([
         fetchUserByUsername(state.currentUser.username),
         fetchGiftById(giftId)
@@ -549,10 +620,7 @@ async function exchangeGift(giftId) {
       if (!latestUser || !latestGift) {
         throw new Error("用户或礼品数据不存在");
       }
-      const userPoints = Number(latestUser.points);
-const giftPoints = Number(latestGift.points);
-
-if (userPoints < giftPoints) {
+      if (latestUser.points < latestGift.points) {
         throw new Error("积分不足");
       }
       if (latestGift.stock <= 0) {
@@ -562,24 +630,48 @@ if (userPoints < giftPoints) {
       const newPoints = latestUser.points - latestGift.points;
       const newStock = latestGift.stock - 1;
 
-      await sheetPatchBy(CONFIG.SHEETS.USERS, "username", latestUser.username, {
-        points: String(newPoints)
-      });
+      // 2. 扣减用户积分，校验响应确认写入成功
+      await requirePatchApplied(
+        sheetPatchBy(CONFIG.SHEETS.USERS, "username", latestUser.username, {
+          points: String(newPoints)
+        }),
+        "积分扣除"
+      );
 
-      await sheetPatchBy(CONFIG.SHEETS.GIFTS, "id", latestGift.id, {
-        stock: String(newStock)
-      });
+      // 3. 扣减库存，若失败则回滚用户积分
+      try {
+        await requirePatchApplied(
+          sheetPatchBy(CONFIG.SHEETS.GIFTS, "id", latestGift.id, {
+            stock: String(newStock)
+          }),
+          "库存更新"
+        );
+      } catch (stockError) {
+        // 回滚：将积分恢复至兑换前的数值
+        try {
+          await sheetPatchBy(CONFIG.SHEETS.USERS, "username", latestUser.username, {
+            points: String(latestUser.points)
+          });
+        } catch (_rollbackError) {
+          // 回滚也失败时抛出致命错误，提醒人工介入
+          throw new Error("兑换失败且积分回滚异常，请联系管理员手动处理");
+        }
+        // 回滚成功，给用户明确提示
+        throw new Error("兑换失败，已自动回滚积分");
+      }
 
+      // 4. 记录兑换历史
       const now = new Date();
       await sheetAppendRow(CONFIG.SHEETS.HISTORIES, {
         username: latestUser.username,
         gift_id: latestGift.id,
         gift_name: latestGift.name,
         cost: String(latestGift.points),
-        date: now.toLocaleString("zh-CN", { hour12: false }),
+        date: now.toLocaleString("zh-CN"),
         timestamp: now.toISOString()
       });
 
+      // 5. 更新本地状态与 UI
       state.currentUser = { ...latestUser, points: newPoints };
       saveSession(state.currentUser);
       updateUserDisplay();
@@ -587,9 +679,13 @@ if (userPoints < giftPoints) {
       showToast("兑换成功");
     });
   } catch (error) {
-    showToast(error.message || "兑换失败，请稍后重试", true);
+    showToast(error.message || "兑换失败", true);
+  } finally {
+    state.isExchanging = false;
   }
 }
+
+// ====== 编辑礼品弹窗 ======
 
 function openEditModal(giftId) {
   if (!isAdmin(state.currentUser)) {
@@ -636,12 +732,15 @@ async function saveGiftEdit(event) {
 
   try {
     await withLoading("正在保存礼品...", async () => {
-      await sheetPatchBy(CONFIG.SHEETS.GIFTS, "id", giftId, {
-        name,
-        points: String(points),
-        stock: String(stock),
-        image
-      });
+      await requirePatchApplied(
+        sheetPatchBy(CONFIG.SHEETS.GIFTS, "id", giftId, {
+          name,
+          points: String(points),
+          stock: String(stock),
+          image
+        }),
+        "礼品更新"
+      );
       closeEditModal();
       await loadGifts({ silent: true });
       showToast("礼品已更新");
@@ -650,6 +749,8 @@ async function saveGiftEdit(event) {
     showToast("保存失败，请检查网络或接口权限", true);
   }
 }
+
+// ====== 删除礼品 ======
 
 async function deleteGift(giftId) {
   if (!isAdmin(state.currentUser)) {
@@ -670,6 +771,8 @@ async function deleteGift(giftId) {
     showToast("删除失败，请稍后重试", true);
   }
 }
+
+// ====== 新增礼品 ======
 
 async function addGift(event) {
   event.preventDefault();
@@ -713,6 +816,8 @@ async function addGift(event) {
     showToast(error.message || "新增失败，请稍后重试", true);
   }
 }
+
+// ====== 积分管理（管理员功能） ======
 
 function resetManagedUserUI() {
   state.managedUser = null;
@@ -773,9 +878,12 @@ async function updateManagedUserPoints(event) {
 
   try {
     await withLoading("正在更新积分...", async () => {
-      await sheetPatchBy(CONFIG.SHEETS.USERS, "username", state.managedUser.username, {
-        points: String(newPoints)
-      });
+      await requirePatchApplied(
+        sheetPatchBy(CONFIG.SHEETS.USERS, "username", state.managedUser.username, {
+          points: String(newPoints)
+        }),
+        "积分更新"
+      );
 
       state.managedUser.points = newPoints;
       els.managedUserStatus.textContent = `当前用户: ${state.managedUser.username} | 积分: ${newPoints}`;
